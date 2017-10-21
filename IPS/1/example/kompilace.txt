@@ -1,0 +1,3 @@
+Pro kompilaci pgrep.c  pouzijte:
+g++ pgrep.c -o pgrep -lpthread
+g++ kostra_pgrep.c -o kostra_pgrep -lpthread
