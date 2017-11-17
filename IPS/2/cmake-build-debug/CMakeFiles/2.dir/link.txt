@@ -1,0 +1,1 @@
+/usr/bin/cc   -std=c99 -Wall -pedantic -Wextra  -g   CMakeFiles/2.dir/test_tmal.c.o CMakeFiles/2.dir/tmal.c.o  -o 2 

@@ -1,0 +1,32 @@
+#IncludeRegexLine: ^[ 	]*#[ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/zeusko/Plocha/FIT3/IPS/2/test_tmal.c
+stdio.h
+-
+assert.h
+-
+tmal.h
+/home/zeusko/Plocha/FIT3/IPS/2/tmal.h
+unistd.h
+-
+
+/home/zeusko/Plocha/FIT3/IPS/2/tmal.c
+tmal.h
+/home/zeusko/Plocha/FIT3/IPS/2/tmal.h
+stdio.h
+-
+stdlib.h
+-
+
+/home/zeusko/Plocha/FIT3/IPS/2/tmal.h
+stddef.h
+-
+stdbool.h
+-
+
