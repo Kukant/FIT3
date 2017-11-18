@@ -23,6 +23,10 @@ stdio.h
 -
 stdlib.h
 -
+assert.h
+-
+string.h
+-
 
 /home/zeusko/Plocha/FIT3/IPS/2/tmal.h
 stddef.h

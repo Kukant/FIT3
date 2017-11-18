@@ -3,6 +3,8 @@
 #include "tmal.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <assert.h>
+#include <string.h>
 
 struct blk_pool_t *blks_table = NULL;
 
@@ -40,7 +42,6 @@ struct blk_t *tal_init_blks(unsigned tid, unsigned nblks, size_t theap)
 {
     blks_table[tid].blks = (struct blk_t *) malloc(sizeof(struct blk_t) * nblks);
     if (blks_table[tid].blks == NULL)
-        //TODO
         return NULL;
 
     blks_table[tid].heap_size = theap;
@@ -51,8 +52,13 @@ struct blk_t *tal_init_blks(unsigned tid, unsigned nblks, size_t theap)
 
     // allocation of first blk
     BLK(tid,0).ptr = malloc(theap);
-    if (BLK(tid,0).ptr == NULL) //TODO
+    if (BLK(tid,0).ptr == NULL)
+    {
+        free(blks_table[tid].blks);
         return NULL;
+    }
+
+
 
 
     BLK(tid, 0).next_idx = -1;
@@ -73,29 +79,44 @@ struct blk_t *tal_init_blks(unsigned tid, unsigned nblks, size_t theap)
  */
 int tal_blk_split(unsigned tid, int blk_idx, size_t req_size)
 {
-    if (BLK(tid,blk_idx).used == true || BLK(tid,blk_idx).size < req_size)
+    struct blk_t to_split = BLK(tid,blk_idx);
+    if (to_split.used == true || to_split.size <= req_size)
         return -1;
 
     // find first unused block
     struct blk_t *first_unused = NULL;
-    for (int i = 0; i < blks_table[tid].nblks; i++)
-        if (BLK(tid,blk_idx).ptr == NULL)
-            first_unused = &BLK(tid,blk_idx);
+    int index = -1;
+    for (unsigned i = 0; i < blks_table[tid].nblks; i++)
+    {
+        if (BLK(tid,i).ptr == NULL)
+        {
+            index = i;
+            first_unused = &BLK(tid,i);
+            break;
+        }
+    }
+
 
     if (first_unused == NULL) // no more free blocks
-        return -1;
-
-    // find some space in the memory
-    void *free_space = NULL;
-    do
     {
+        return -1;
+    }
 
-    } while(0);
+    int next_index = BLK(tid,blk_idx).next_idx;
 
-    first_unused->used = true;
+    BLK(tid, next_index).prev_idx = index;
+
+    first_unused->ptr = to_split.ptr + req_size;
+    first_unused->used = false;
     first_unused->prev_idx = blk_idx;
-    first_unused->next_idx = -1;
-    first_unused->size = req_size;
+    first_unused->next_idx = to_split.next_idx;
+    first_unused->size = to_split.size - req_size;
+
+    BLK(tid,blk_idx).next_idx = index;
+    BLK(tid,blk_idx).used = true;
+    BLK(tid,blk_idx).size = req_size;
+
+    return index;
 }
 
 /**
@@ -106,7 +127,12 @@ int tal_blk_split(unsigned tid, int blk_idx, size_t req_size)
  */
 void tal_blk_merge(unsigned tid, int left_idx, int right_idx)
 {
-
+    BLK(tid, left_idx).next_idx = BLK(tid, right_idx).next_idx;
+    if (BLK(tid, right_idx).next_idx >= 0)
+        BLK(tid, BLK(tid, right_idx).next_idx).prev_idx = left_idx;
+    BLK(tid, left_idx).size += BLK(tid, right_idx).size;
+    BLK(tid, left_idx).used = false;
+    blk_ctor(&BLK(tid, right_idx));
 }
 
 /**
@@ -118,7 +144,36 @@ void tal_blk_merge(unsigned tid, int left_idx, int right_idx)
  */
 void *tal_alloc(unsigned tid, size_t size)
 {
+    // align
+    if (size % 8 != 0)
+        size += (8 - size % 8);
 
+    // find first free block with enough space
+    int index = 0;
+    for (unsigned i = 0; i < blks_table[tid].nblks ; i++)
+    {
+        if (BLK(tid, index).used == false && BLK(tid, index).size >= size)
+        {
+            if (BLK(tid, index).size == size)
+            {
+                BLK(tid, index).used = true;
+                return BLK(tid, index).ptr;
+            }
+
+            int j = tal_blk_split(tid, index, size);
+            if (j < 0) // nekde se stala chyba
+                return NULL;
+            else
+                return BLK(tid, index).ptr;
+        }
+
+        if (BLK(tid, index).next_idx < 0)
+            break;
+        else
+            index = BLK(tid, index).next_idx;
+    }
+
+    return NULL;
 }
 
 /**
@@ -131,7 +186,97 @@ void *tal_alloc(unsigned tid, size_t size)
  */
 void *tal_realloc(unsigned tid, void *ptr, size_t size)
 {
+    // align
+    if (size % 8 != 0)
+        size += (8 - size % 8);
 
+    int index = 0;
+    for (unsigned i = 0; i < blks_table[tid].nblks ; i++)
+    {
+        if (BLK(tid, index).ptr == ptr)
+        {
+            int next = BLK(tid, index).next_idx;
+            size_t diff = BLK(tid, index).size < size ? size - BLK(tid, index).size : BLK(tid, index).size - size;
+            if (size < BLK(tid, index).size) // will be reduced
+            {
+                if (next > 0 && BLK(tid, next).used == false) // if next is empty
+                {
+                    BLK(tid, next).ptr -= diff;
+                    BLK(tid, next).size += diff;
+                }
+                else // create new block
+                {
+                    int new_blk_index = -1;
+                    for (unsigned j = 0; j < blks_table[tid].nblks; j++)
+                    {
+                        if (BLK(tid, j).ptr == NULL) // volny blok
+                        {
+                            new_blk_index = j;
+                            break;
+                        }
+                    }
+
+                    if (new_blk_index < 0) // empty not found
+                        return  NULL;
+
+                    BLK(tid, new_blk_index).size = diff;
+                    BLK(tid, new_blk_index).used = false;
+                    BLK(tid, new_blk_index).ptr = BLK(tid, next).ptr - diff;
+                    BLK(tid, new_blk_index).next_idx = next;
+                    BLK(tid, new_blk_index).prev_idx = index;
+
+                    BLK(tid, index).next_idx = new_blk_index;
+                    BLK(tid, next).prev_idx = new_blk_index;
+                }
+
+                BLK(tid, index).size -= diff;
+                return BLK(tid, index).ptr;
+            }
+            else if (size == BLK(tid, index).size) // same size
+            {
+                return BLK(tid, index).ptr;
+            }
+            else // size larger than actual
+            {
+                if (next >= 0 && BLK(tid, next).used == false && BLK(tid, next).size + BLK(tid, index).size >= size) // can be extended
+                {
+                    if (BLK(tid, next).size + BLK(tid, index).size == size)
+                    {
+                        BLK(tid, next).ptr = NULL;
+                        BLK(tid, BLK(tid, next).next_idx).prev_idx = index;
+                        if (BLK(tid, next).next_idx > 0)
+                            BLK(tid, index).next_idx = BLK(tid, next).next_idx;
+                    }
+                    else
+                    {
+                        BLK(tid, next).size -= diff;
+                        BLK(tid, next).ptr += diff;
+                    }
+
+                    BLK(tid, index).size += diff;
+                    return BLK(tid, index).ptr;
+                }
+                else // is the last one or cannot be extended
+                {
+                    void *new_memory = tal_alloc(tid, size);
+                    if (new_memory != NULL)
+                    {
+                        memcpy(new_memory, ptr, size);
+                        tal_free(tid, ptr);
+                    }
+
+                    return new_memory;
+                }
+            }
+        } // end of if
+
+        if (BLK(tid, index).next_idx < 0)
+            break;
+        else
+            index = BLK(tid, index).next_idx;
+    } // end of for cycle
+
+    return NULL;
 }
 
 /**
@@ -142,5 +287,28 @@ void *tal_realloc(unsigned tid, void *ptr, size_t size)
  */
 void tal_free(unsigned tid, void *ptr)
 {
+    int index = 0;
+    for (unsigned i = 0; i < blks_table[tid].nblks ; i++)
+    {
+        if (BLK(tid, index).ptr == ptr)
+        {
+            BLK(tid, index).used = false;
+            int prev = BLK(tid, index).prev_idx;
+            int next = BLK(tid, index).next_idx;
+            if (prev >= 0 && BLK(tid, prev).used == false)
+            {
+                tal_blk_merge(tid, prev, index);
+                if (next >= 0 && BLK(tid, next).used == false)
+                    tal_blk_merge(tid, prev, next);
+            }
+            else if (next >= 0 && BLK(tid, next).used == false)
+                tal_blk_merge(tid, index, next);
+            return;
+        }
 
+        if (BLK(tid, index).next_idx < 0)
+            break;
+        else
+            index = BLK(tid, index).next_idx;
+    }
 }
